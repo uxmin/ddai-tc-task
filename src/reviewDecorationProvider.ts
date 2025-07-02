@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 export interface FolderReviewStatus {
   path: string;
   task_done: boolean;
+  notice?: string;
   tasked_by: string;
   tasked_at?: string; // 없을 수도 있음
   review_done: boolean;
@@ -15,9 +16,20 @@ export interface FolderReviewStatus {
 export type ReviewMap = Record<string, FolderReviewStatus>;
 
 export function loadReviewJson(file: string, root: string): Record<string, FolderReviewStatus> {
-  if (!fs.existsSync(file)) return {};
+  if (!fs.existsSync(file)) {
+    console.warn(`[loadReviewJson] File not found: ${file}`);
+    return {};
+  }
 
-  const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  let raw: any[];
+  try {
+    const content = fs.readFileSync(file, "utf8");
+    raw = JSON.parse(content);
+    console.log(`[loadReviewJson] Successfully parsed ${Object.keys(raw).length} raw entries from ${file}`);
+  } catch (error) {
+    console.error(`[loadReviewJson] Error parsing JSON from ${file}:`, error);
+    return {}; // 파싱 실패 시 빈 객체 반환
+  }
   const fixed: Record<string, FolderReviewStatus> = {};
 
   for (const item of raw) {
@@ -33,6 +45,7 @@ export function loadReviewJson(file: string, root: string): Record<string, Folde
     fixed[key] = item as FolderReviewStatus;
   }
 
+  console.log(`[loadReviewJson] Final fixed review map contains ${Object.keys(fixed).length} entries.`);
   return fixed;
 }
 
@@ -146,9 +159,6 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
 
     // 5. 생성된 keyToLookup으로 reviewData(reviewMap)를 조회합니다.
     const reviewEntry = this.reviewData[keyToLookup];
-    console.log("????????????????????");
-    console.log(keyToLookup, ">>>", reviewEntry);
-    console.log("????????????????????");
 
     // 💡 디버깅을 위해 추가
     // console.log(`[provideFileDecoration] URI: ${uri.fsPath}`);
@@ -189,30 +199,38 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
       };
     }
 
-    const { task_done, review_done, review_comment } = reviewEntry;
+    const { task_done, notice, review_done, review_comment } = reviewEntry;
+    const isNoticeEmpty = !(notice ?? "");
+    const isReviewCommentEmpty = !(review_comment ?? "");
 
-    if (!task_done && !review_done && !(review_comment ?? "")) {
+    if (!task_done && isNoticeEmpty && !review_done && isReviewCommentEmpty) {
       return {
         badge: "◌",
         tooltip: "작업 대기 (미시작)",
       };
-    } else if (task_done && !review_done && !(review_comment ?? "")) {
+    } else if (task_done && isNoticeEmpty && !review_done && isReviewCommentEmpty) {
       return {
         badge: "T",
         color: new vscode.ThemeColor("charts.yellow"),
         tooltip: "작업 완료 (검수 미완)",
       };
-    } else if (task_done && review_done && !(review_comment ?? "")) {
+    } else if (task_done && !isNoticeEmpty && !review_done && isReviewCommentEmpty) {
+      return {
+        badge: "T!",
+        color: new vscode.ThemeColor("charts.orange"),
+        tooltip: "작업 완료, 특이사항 있음 (검수 대기)",
+      };
+    } else if (task_done && review_done && isReviewCommentEmpty) {
       return {
         badge: "✓",
         color: new vscode.ThemeColor("charts.green"),
         tooltip: "작업 및 검수 완료",
       };
-    } else if (task_done && review_done && (review_comment ?? "")) {
+    } else if (task_done && review_done && !isReviewCommentEmpty) {
       return {
         badge: "💬",
-        tooltip: "작업 및 검수 완료 (코멘트 있음)",
         color: new vscode.ThemeColor("charts.blue"),
+        tooltip: "작업 및 검수 완료 (코멘트 있음)",
       };
     } else {
       return {

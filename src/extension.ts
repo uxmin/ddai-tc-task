@@ -1,3 +1,4 @@
+import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -113,34 +114,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 // ✅ .review.json 변경 시 리프레시
 function refreshReviewStatus(reviewPath: string, decorationProvider: ReviewFileDecorationProvider) {
-  if (!fs.existsSync(reviewPath)) {
-    return;
-  }
-
-  const content = fs.readFileSync(reviewPath, "utf-8");
-  let data: any[];
-  try {
-    data = JSON.parse(content);
-  } catch (e) {
-    console.error("Invalid .review.json format:", e);
-    return;
-  }
-
-  // ✅ 조건에 맞는 항목은 제외하고 필터링
-  const filteredData = data.filter((entry) => {
-    const { task_done, review_done, review_comment } = entry;
-    return !(task_done === false && review_done === false && (review_comment ?? "") === "");
-  });
-
-  const reviewMap: Record<string, any> = {};
-  filteredData.forEach((entry) => {
-    const fullRelativePath = path.join(entry.path.replace("./", ""), entry.filename);
-    reviewMap[fullRelativePath] = entry;
-  });
-
-  console.log("Review Map Keys:", Object.keys(reviewMap));
-
-  decorationProvider.updateReviewData(reviewMap);
+  const updatedReviewMap = loadReviewJson(reviewPath, "");
+  decorationProvider.updateReviewData(updatedReviewMap);
 }
 
 /**
@@ -231,19 +206,40 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
   // 웹뷰에서 확장 프로그램으로 전송된 메시지 처리
   panel.webview.onDidReceiveMessage(async (message) => {
     console.log("📥 웹뷰 메시지 수신:", message);
+
     // 메시지가 "saveStatus" 명령인지 확인
     if (message.command === "saveStatus") {
       const now = new Date().toISOString();
+      const hasNotice = !!message.notice?.trim();
+      const hasReviewComment = !!message.review_comment?.trim();
+
+      // 이전 값과 비교해서 상태 변경 여부 판단
+      const isTaskChanged = message.task_done !== currentFileReview?.task_done;
+      const isNoticeChanged = message.notice !== currentFileReview?.notice;
+      const isReviewChanged = message.review_done !== currentFileReview?.review_done;
+      const isCommentChanged = message.review_comment !== currentFileReview?.review_comment;
+
       const newStatus: any = {
         path: currentPath,
         filename: path.basename(filepath),
         task_done: message.task_done,
+        notice: message.notice,
         tasked_by: "",
-        tasked_at: message.task_done ? now : currentFileReview?.tasked_at || "",
+        tasked_at:
+          message.task_done || hasNotice
+            ? isTaskChanged || isNoticeChanged
+              ? now
+              : currentFileReview?.tasked_at || ""
+            : currentFileReview?.tasked_at || "",
         review_done: message.review_done,
         review_comment: message.review_comment,
         reviewed_by: "",
-        reviewed_at: message.review_done ? now : currentFileReview?.reviewed_at || "",
+        reviewed_at:
+          message.review_done || hasReviewComment
+            ? isReviewChanged || isCommentChanged
+              ? now
+              : currentFileReview?.reviewed_at || ""
+            : currentFileReview?.reviewed_at || "",
       };
 
       const existingIndex = existingReviews.findIndex(
@@ -259,6 +255,23 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
       try {
         fs.writeFileSync(reviewPath, JSON.stringify(existingReviews, null, 2));
         vscode.window.showInformationMessage(`Review status for ${path.basename(filepath)} saved successfully.`);
+        // ✅ JSON 탭 닫기 시도
+        const normalizedFilepath = path.resolve(filepath);
+        const targetEditor = vscode.window.visibleTextEditors.find((editor) => {
+          const editorPath = path.resolve(editor.document.uri.fsPath);
+          return editorPath === normalizedFilepath;
+        });
+
+        if (targetEditor) {
+          const document = targetEditor.document;
+          const viewColumn = targetEditor.viewColumn;
+          await vscode.window.showTextDocument(document, viewColumn);
+          await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+        } else {
+          console.warn("JSON 파일 탭을 닫지 못했습니다: 열려 있는 에디터에서 찾지 못함");
+        }
+        // 웹뷰 닫기
+        panel.dispose();
       } catch (error) {
         vscode.window.showErrorMessage(
           `.review.json을 쓰는 데 실패했습니다: ${error instanceof Error ? error.message : String(error)}`
@@ -266,37 +279,16 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
       }
     }
   });
+
+  const gitUser = getGitUserName();
+
   // 웹뷰에 초기 데이터 전송 (DOM 로드 후 데이터 설정)
   // 웹뷰 스크립트에서 'initialData' 명령을 처리할 준비가 되어 있어야 함
   panel.webview.postMessage({
     command: "initialData",
+    gitUserName: gitUser,
     data: currentFileReview, // 기존 데이터가 없으면 undefined가 될 수 있음
   });
-}
-
-/**
- * VS Code Git 확장 프로그램에서 Git 사용자 이름을 가져오려고 시도합니다.
- * @returns Git 사용자 이름 또는 확인할 수 없는 경우 "unknown".
- */
-async function getGitUser(): Promise<string> {
-  try {
-    const gitExtension = vscode.extensions.getExtension("vscode.git");
-    if (gitExtension) {
-      // Git 확장이 활성화되어 있는지 확인하고 API 가져오기
-      const git = gitExtension.exports.getAPI(1); // Use getAPI(1) for a stable API version
-      if (git && git.repositories && git.repositories.length > 0) {
-        // 첫 번째 저장소에서 설정 가져오기 시도
-        const config = git.repositories[0].repository.config;
-        const userName = config?.["user.name"];
-        if (userName) {
-          return userName.toString();
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Failed to get Git user name:", error);
-  }
-  return "unknown";
 }
 
 /**
@@ -320,17 +312,65 @@ function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri, filename
 					<meta http-equiv="Content-Security-Policy" 
                 content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline';">
 					<style>
-							body { font-family: sans-serif; padding: 20px; }
-							label { display: block; margin-bottom: 5px; }
-							textarea { width: 100%; height: 100px; margin-bottom: 10px; padding: 8px; box-sizing: border-box; }
-							button { padding: 10px 15px; background-color: #007acc; color: white; border: none; cursor: pointer; }
-							button:hover { background-color: #005f99; }
+							body { 
+                font-family: sans-serif; 
+                padding: 20px; 
+              }
+							label { 
+                display: block; 
+                margin-bottom: 8px; 
+              }
+							textarea { 
+                width: 100%; 
+                height: 100px; 
+                margin-bottom: 10px; 
+                padding: 8px; 
+                box-sizing: border-box; 
+              }
+							button { 
+                padding: 10px 15px; 
+                background-color: #007acc; 
+                color: white; 
+                border: none; 
+                cursor: pointer; 
+              }
+							button:hover { 
+                background-color: #005f99; 
+              }
+
+              .inline-meta {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                margin-left: 8px;
+              }
+
+              .badge {
+                background-color: #007acc;
+                color: white;
+                padding: 2px 8px;
+                border-radius: 12px;
+                font-size: 0.85em;
+                font-weight: bold;
+              }
+
+              .meta-time {
+                font-size: 0.8em;
+                color: #888;
+              }
 					</style>
 			</head>
 			<body>
 					<h3>${filename}</h3>
-					<label><input type="checkbox" id="taskDone"> 작업 완료</label>
-					<label><input type="checkbox" id="reviewDone"> 검수 완료</label>
+					<label>
+            <input type="checkbox" id="taskDone"> 작업 완료
+            <span id="taskMeta"></span>
+          </label>
+					<textarea id="notice" placeholder="작업 코멘트 입력 (특이사항 등)"></textarea>
+          <label>
+            <input type="checkbox" id="reviewDone"> 검수 완료
+            <span id="reviewMeta"></span>
+          </label>
 					<textarea id="comment" placeholder="검수 코멘트 입력"></textarea>
 					<button onclick="saveStatus()">저장</button>
 
@@ -351,6 +391,16 @@ function getNonce() {
     text += possible.charAt(Math.floor(Math.random() * possible.length));
   }
   return text;
+}
+
+function getGitUserName(): string {
+  try {
+    const output = execSync("git config user.name", { encoding: "utf-8" }).trim();
+    return output;
+  } catch (error) {
+    console.warn("Git user.name 조회 실패:", error);
+    return "";
+  }
 }
 
 // 이 메서드는 확장 프로그램이 비활성화될 때 호출됩니다.
