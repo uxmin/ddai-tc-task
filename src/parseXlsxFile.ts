@@ -1,7 +1,9 @@
+import * as path from "path";
 import * as vscode from "vscode";
 import * as XLSX from "xlsx";
+import { toPosixPath } from "./reviewDecorationProvider";
 
-export function parseXlsxFile(xlsxPath: string, rootDir: string): string[] {
+export function parseXlsxFile(xlsxPath: string, gitUser: string): string[] {
   const allowedFiles = new Set<string>();
   try {
     const workbook = XLSX.readFile(xlsxPath);
@@ -9,25 +11,38 @@ export function parseXlsxFile(xlsxPath: string, rootDir: string): string[] {
     const worksheet = workbook.Sheets[sheetName];
     const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }); // 헤더 포함하여 JSON으로 변환
 
-    // 첫 번째 행 (헤더)를 읽어서 'filename' 컬럼 인덱스 찾기
+    // 첫 번째 행 (헤더)를 읽어서 컬럼 인덱스 찾기
     const headers: string[] = jsonData[0] as string[];
-    const filenameColumnIndex = headers.findIndex(
-      (header) => header.trim().toLowerCase() === "filename" // "filename" 헤더 찾기
-    );
+    const filepathIdx = headers.findIndex((h) => h.trim().toLowerCase() === "filepath");
+    const filenameIdx = headers.findIndex((h) => h.trim().toLowerCase() === "filename");
+    const workerIdx = headers.findIndex((h) => h.trim().toLowerCase() === "worker");
 
-    if (filenameColumnIndex === -1) {
-      vscode.window.showWarningMessage(`'${xlsxPath}' 파일에 'filename' 헤더가 없습니다.`, { modal: false });
+    if (filepathIdx === -1 || filenameIdx === -1 || workerIdx === -1) {
+      vscode.window.showWarningMessage(
+        `'${xlsxPath}' 파일에 'filepath', 'filename', 'worker' 헤더가 모두 존재해야 합니다.`,
+        { modal: false }
+      );
       return Array.from(allowedFiles);
     }
 
     // 두 번째 행부터 데이터 읽기
     for (let i = 1; i < jsonData.length; i++) {
       const row: any = jsonData[i];
-      const filename = row[filenameColumnIndex];
 
-      if (typeof filename === "string" && filename.trim() !== "") {
-        // 공백 이후의 내용도 파일명으로 간주할 수 있도록 .split(' ')[0] 등으로 처리하지 않음
-        allowedFiles.add(filename.trim());
+      const filepath = row[filepathIdx];
+      const filename = row[filenameIdx];
+      const worker = row[workerIdx];
+
+      if (
+        typeof filepath === "string" &&
+        typeof filename === "string" &&
+        typeof worker === "string" &&
+        filepath.trim() !== "" &&
+        filename.trim() !== "" &&
+        worker.trim() === gitUser
+      ) {
+        const fullPath = path.posix.join(filepath.trim(), filename.trim());
+        allowedFiles.add(toPosixPath(fullPath));
       }
     }
   } catch (error) {

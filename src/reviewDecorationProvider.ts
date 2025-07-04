@@ -5,13 +5,13 @@ import * as vscode from "vscode";
 export interface FolderReviewStatus {
   path: string;
   task_done: boolean;
-  notice?: string;
   tasked_by: string;
   tasked_at?: string; // 없을 수도 있음
   review_done: boolean;
   review_comment?: string; // 없을 수도 있음
   reviewed_by: string;
   reviewed_at?: string; // 없을 수도 있음
+  reporting?: string;
 }
 export type ReviewMap = Record<string, FolderReviewStatus>;
 
@@ -47,6 +47,10 @@ export function loadReviewJson(file: string, root: string): Record<string, Folde
 
   console.log(`[loadReviewJson] Final fixed review map contains ${Object.keys(fixed).length} entries.`);
   return fixed;
+}
+
+export function toPosixPath(p: string): string {
+  return p.replace(/\\/g, "/");
 }
 
 export class ReviewFileDecorationProvider implements vscode.FileDecorationProvider {
@@ -104,18 +108,26 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
   }
 
   /**
-   * 주어진 폴더 경로에 `allowedFiles`에 없는 `.json` 파일이 있는지 확인
+   * 주어진 폴더 경로에 allowedFiles에 포함된 JSON 파일이 하나라도 있는지 확인
    * @param folderPath 확인할 폴더의 절대 경로
-   * @returns 금지된 파일이 있으면 true, 아니면 false
+   * @returns 할당된 JSON 파일이 하나라도 있으면 true
    */
-  private checkIfFolderHasForbiddenFiles(folderPath: string): boolean {
+  private checkIfFolderHasForbiddenFiles(folderPath: string, workspaceRoot: string): boolean {
     try {
       const filesInFolder = fs.readdirSync(folderPath);
       for (const file of filesInFolder) {
         const fullFilePath = path.join(folderPath, file);
         const stat = fs.lstatSync(fullFilePath);
-        if (stat.isFile() && file.endsWith(".json") && file !== ".review.json" && !this.allowedFiles.has(file)) {
-          return true; // 할당되지 않은 *.json 파일이 발견됨
+        if (stat.isFile() && file.endsWith(".json") && file !== ".review.json" && this.allowedFiles.has(file)) {
+          // 현재 파일의 workspace 기준 상대경로 만들기
+          const relativePath = path.relative(workspaceRoot, fullFilePath);
+
+          // 항상 POSIX 스타일로 통일
+          const posixPath = relativePath.split(path.sep).join("/");
+
+          if (this.allowedFiles.has(posixPath)) {
+            return true; // 할당된 파일이 존재
+          }
         }
       }
       return false;
@@ -151,7 +163,7 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
     if (pathSegments.length >= 1) {
       // 'workspace'만 건너뛰고 나머지 세그먼트를 사용합니다.
       const desiredSegments = pathSegments.slice(1);
-      keyToLookup = desiredSegments.join(path.sep);
+      keyToLookup = desiredSegments.join("/");
     } else {
       // 경로가 너무 짧으면 매칭할 수 없습니다.
       return undefined;
@@ -161,19 +173,22 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
     const reviewEntry = this.reviewData[keyToLookup];
 
     // 💡 디버깅을 위해 추가
-    // console.log(`[provideFileDecoration] URI: ${uri.fsPath}`);
+    // console.log(`[provideFileDecoration] URI: ${filePath}`);
     // console.log(`[provideFileDecoration] Relative from Root: ${relativePathFromWorkspaceRoot}`);
     // console.log(`[provideFileDecoration] Key to Lookup: ${keyToLookup}`);
     // console.log(`[provideFileDecoration] Found Entry:`, reviewEntry ? "Yes" : "No");
 
     // Folder Deco
     if (this.isDirectory(uri)) {
-      const hasForbiddenFile = this.checkIfFolderHasForbiddenFiles(filePath);
+      const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+      if (!workspaceFolder) return undefined;
+
+      const hasForbiddenFile = this.checkIfFolderHasForbiddenFiles(filePath, workspaceFolder.uri.fsPath);
       if (hasForbiddenFile) {
         return {
-          badge: "⛔",
-          tooltip: "하위 폴더/파일에 할당되지 않은 파일 있음",
-          color: new vscode.ThemeColor("descriptionForeground"),
+          // badge: "⚠️",
+          tooltip: "할당된 작업 파일 포함됨",
+          color: new vscode.ThemeColor("charts.purple"),
         };
       }
       return undefined;
@@ -184,7 +199,7 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
       return; // 데코레이션 없음
     }
 
-    if (!this.allowedFiles.has(filename)) {
+    if (!this.allowedFiles.has(toPosixPath(keyToLookup))) {
       return {
         badge: "⛔",
         tooltip: "할당되지 않은 파일",
@@ -199,22 +214,22 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
       };
     }
 
-    const { task_done, notice, review_done, review_comment } = reviewEntry;
-    const isNoticeEmpty = !(notice ?? "");
+    const { task_done, review_done, review_comment, reporting } = reviewEntry;
+    const isReportingEmpty = !(reporting ?? "");
     const isReviewCommentEmpty = !(review_comment ?? "");
 
-    if (!task_done && isNoticeEmpty && !review_done && isReviewCommentEmpty) {
+    if (!task_done && isReportingEmpty && !review_done && isReviewCommentEmpty) {
       return {
         badge: "◌",
         tooltip: "작업 대기 (미시작)",
       };
-    } else if (task_done && isNoticeEmpty && !review_done && isReviewCommentEmpty) {
+    } else if (task_done && isReportingEmpty && !review_done && isReviewCommentEmpty) {
       return {
         badge: "T",
         color: new vscode.ThemeColor("charts.yellow"),
         tooltip: "작업 완료 (검수 미완)",
       };
-    } else if (task_done && !isNoticeEmpty && !review_done && isReviewCommentEmpty) {
+    } else if (task_done && !isReportingEmpty && !review_done && isReviewCommentEmpty) {
       return {
         badge: "T!",
         color: new vscode.ThemeColor("charts.orange"),

@@ -3,48 +3,73 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { parseXlsxFile } from "./parseXlsxFile";
+import { ReadonlyFileSystemProvider } from "./ReadonlyFileSystemProvider";
 import { ReviewFileDecorationProvider, loadReviewJson } from "./reviewDecorationProvider";
+
+const state = {
+  workspaceRoot: "",
+  allowedFiles: new Set<string>(),
+  allowedFilesFromReviewJson: new Set<string>(),
+  isChecking: false, // 무한 루프 방지 플래그
+};
 
 // JSON 파일 경로와 해당 파일에 연결된 웹뷰 패널을 저장하는 Map
 const openReviewPanels = new Map<string, vscode.WebviewPanel>();
+const forbiddenFiles = new Set<string>([
+  ".review.json",
+  ".gitignore",
+  "generate.sh",
+  "listup.sh",
+  "merge_task_status.py",
+  "merge-task-status.yml",
+]);
+const readonlyScheme = "readonly-file";
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Congratulations, your extension "tc-task" is now active!');
 
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!workspaceRoot) return;
+  state.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+  if (!state.workspaceRoot) return;
+
+  const gitUser = getGitUserName();
 
   // 작업 제외 파일 추출
-  const xlsxName = "filename.xlsx";
-  const xlsxPath = path.join(workspaceRoot, xlsxName);
-  let allowedFiles = fs.existsSync(xlsxPath) ? parseXlsxFile(xlsxPath, workspaceRoot) : new Set<string>();
-  if (Array.isArray(allowedFiles)) allowedFiles = new Set<string>(allowedFiles);
+  const xlsxName = "workfile.xlsx";
+  const xlsxPath = path.join(state.workspaceRoot, xlsxName);
+  const parsedAllowedFiles = fs.existsSync(xlsxPath) ? parseXlsxFile(xlsxPath, gitUser) : [];
+  state.allowedFiles = Array.isArray(parsedAllowedFiles) ? new Set<string>(parsedAllowedFiles) : parsedAllowedFiles;
 
-  const reviewPath: string = path.join(workspaceRoot, ".review.json");
-  const initialReviewMap = loadReviewJson(reviewPath, workspaceRoot);
+  const reviewPath: string = path.join(state.workspaceRoot, ".review.json");
+  const initialReviewMap = loadReviewJson(reviewPath, state.workspaceRoot);
 
-  const decorationProvider = new ReviewFileDecorationProvider(initialReviewMap, allowedFiles);
+  state.allowedFilesFromReviewJson = new Set<string>(Object.keys(initialReviewMap));
+
+  const decorationProvider = new ReviewFileDecorationProvider(initialReviewMap, state.allowedFiles);
   context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorationProvider));
   decorationProvider["__forceRefresh"]?.();
 
   // ✅ .review.json 실시간 감지
-  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(workspaceRoot, ".review.json"));
+  const watcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(state.workspaceRoot, ".review.json")
+  );
   watcher.onDidChange(() => refreshReviewStatus(reviewPath, decorationProvider));
   watcher.onDidCreate(() => refreshReviewStatus(reviewPath, decorationProvider));
   watcher.onDidDelete(() => decorationProvider.updateReviewData({}));
   context.subscriptions.push(watcher);
 
-  // ✅ filename.xlsx 실시간 감지 (새로운 부분)
-  const xlsxWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(workspaceRoot, xlsxName));
+  // ✅ workfile.xlsx 실시간 감지 (새로운 부분)
+  const xlsxWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(state.workspaceRoot, xlsxName)
+  );
   xlsxWatcher.onDidChange(() => {
-    const updatedAllowedFiles = parseXlsxFile(xlsxPath, workspaceRoot);
+    const updatedAllowedFiles = parseXlsxFile(xlsxPath, gitUser);
     decorationProvider.updateAllowedFiles(new Set<string>(updatedAllowedFiles));
     vscode.window.showInformationMessage(`'${xlsxName}' 파일이 업데이트되어 파일 허용 목록을 갱신했습니다.`, {
       modal: false,
     });
   });
   xlsxWatcher.onDidCreate(() => {
-    const updatedAllowedFiles = parseXlsxFile(xlsxPath, workspaceRoot);
+    const updatedAllowedFiles = parseXlsxFile(xlsxPath, gitUser);
     decorationProvider.updateAllowedFiles(new Set<string>(updatedAllowedFiles));
     vscode.window.showInformationMessage(`'${xlsxName}' 파일이 생성되어 파일 허용 목록을 로드했습니다.`, {
       modal: false,
@@ -78,7 +103,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       if (filePath && filePath.endsWith(".json")) {
-        showStatusPanel(context, filePath);
+        showStatusPanel(context, filePath, false);
       } else if (filePath) {
         vscode.window.showWarningMessage("The selected file is not a JSON file.", { modal: false });
       } else {
@@ -87,29 +112,118 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // JSON 문서 열릴 때 자동 패널
-  vscode.workspace.onDidOpenTextDocument((document) => {
-    const filename = path.basename(document.uri.fsPath);
+  vscode.workspace.onDidOpenTextDocument(async (document) => {
+    // 이미 처리 중이거나, 우리 스킴이거나, 실제 파일이 아니면 무시
+    if (state.isChecking || document.uri.scheme === readonlyScheme || document.uri.scheme !== "file") {
+      return;
+    }
+
+    const filePath = document.uri.fsPath;
+    const filename = path.basename(filePath);
+
+    // 조건 1: 절대 금지 파일
+    if (forbiddenFiles.has(filename)) {
+      state.isChecking = true;
+      vscode.window.showErrorMessage(`'${filename}' 파일은 절대 편집할 수 없습니다.`);
+      await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+      state.isChecking = false;
+      return;
+    }
+
+    const relativePath = path.relative(state.workspaceRoot, filePath);
+    let posixPath = relativePath.split(path.sep).join("/");
+    if (posixPath.startsWith("workspace/")) {
+      posixPath = posixPath.substring("workspace/".length);
+    }
+
+    // ✨ 조건 2: 할당되지 않은 리뷰 파일 (읽기 전용 대상)
+    const isReadonly = state.allowedFilesFromReviewJson.has(posixPath) && !state.allowedFiles.has(posixPath);
+
+    console.log("document.languageId:\t", document.languageId);
+    console.log("filename:\t", filename);
+    console.log("isReadonly:\t", isReadonly);
+    console.log("posixPath:\t", posixPath);
+
+    // 조건 3: 일반 JSON 파일 (웹뷰만 열기)
+    // (isReadonly가 아닌 파일만 이 로직을 타게 됨)
     if (document.languageId === "json" && filename !== ".review.json") {
-      showStatusPanel(context, document.uri.fsPath);
-      console.log("열림:", document.uri.fsPath);
+      state.isChecking = true;
+      await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+      await openFileWithCorrectMode(context, filePath);
+      console.log("열림:", filePath);
+      state.isChecking = false;
     }
   });
 
-  // JSON 문서 닫힐 때 패널도 닫기
+  // 1. ReadonlyFileSystemProvider 등록
+  const readonlyProvider = new ReadonlyFileSystemProvider();
   context.subscriptions.push(
-    vscode.workspace.onDidCloseTextDocument((document) => {
-      const filePath = document.uri.fsPath;
-      if (document.languageId === "json") {
-        const panel = openReviewPanels.get(filePath);
-        if (panel) {
-          panel.dispose();
-          openReviewPanels.delete(filePath);
-          console.log(`Review panel for ${path.basename(filePath)} closed.`);
-        }
-      }
+    vscode.workspace.registerFileSystemProvider(readonlyScheme, readonlyProvider, {
+      isCaseSensitive: true,
+      isReadonly: true,
     })
   );
+
+  // 2. 파일 열기 로직을 처리하는 함수
+  // 이 함수는 파일 경로를 받아 조건에 따라 적절한 모드로 파일을 엽니다.
+  const openFileWithCorrectMode = async (context: vscode.ExtensionContext, filePath: string) => {
+    // 상대 경로 및 POSIX 형식으로 변환 (사용자 코드와 동일)
+    const relativePath = path.relative(state.workspaceRoot, filePath);
+    let posixPath = relativePath.split(path.sep).join("/");
+    if (posixPath.startsWith("workspace/")) {
+      posixPath = posixPath.substring("workspace/".length);
+    }
+
+    // ✨ 핵심 조건부 로직 ✨
+    const isReadonly = state.allowedFilesFromReviewJson.has(posixPath) && !state.allowedFiles.has(posixPath);
+
+    if (isReadonly) {
+      console.log(`[읽기 전용 모드]: ${posixPath}`);
+      // file:// 스킴을 readonly-file:// 스킴으로 변경
+      const targetUri = vscode.Uri.file(filePath).with({ scheme: readonlyScheme });
+      // 1. 읽기 전용 에디터 열기
+      await vscode.window.showTextDocument(targetUri, { preview: false, viewColumn: vscode.ViewColumn.One });
+      // 2. ✨ 읽기 전용 웹뷰 함께 열기 ✨
+      showStatusPanel(context, filePath, true);
+    } else {
+      console.log(`[편집 모드]: ${posixPath}`);
+      // 일반 파일 스킴 사용
+      const targetUri = vscode.Uri.file(filePath);
+      // 1. 일반 에디터 열기
+      await vscode.window.showTextDocument(targetUri, { preview: false, viewColumn: vscode.ViewColumn.One });
+      // 2. ✨ 편집 가능 웹뷰 함께 열기 (파일이 JSON인 경우) ✨
+      if (filePath.endsWith(".json")) {
+        showStatusPanel(context, filePath, false);
+      }
+    }
+  };
+
+  // 3. 파일 열기를 트리거하는 커맨드 등록 (예시)
+  // 예를 들어, 확장 기능의 TreeView 아이템을 클릭했을 때 이 커맨드를 호출할 수 있습니다.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("myExtension.openFile", (filePath: string) => {
+      openFileWithCorrectMode(context, filePath);
+    })
+  );
+
+  // // JSON 문서 닫힐 때 패널도 닫기
+  // context.subscriptions.push(
+  //   vscode.workspace.onDidCloseTextDocument((document) => {
+  //     const closedFilePath = document.uri.fsPath;
+  //     // openReviewPanels 맵에서 해당 경로의 패널을 찾습니다.
+  //     const panelToClose = openReviewPanels.get(closedFilePath);
+
+  //     // 패널이 존재하면 닫습니다.
+  //     if (panelToClose) {
+  //       console.log(
+  //         `[File Close -> Webview Close] JSON 파일 '${path.basename(closedFilePath)}'이(가) 닫혀 관련 웹뷰를 닫습니다.`
+  //       );
+
+  //       // onDidDispose가 자동으로 호출되므로 맵에서 직접 삭제할 필요가 없습니다.
+  //       panelToClose.dispose();
+  //     }
+  //   })
+  // );
 }
 
 // ✅ .review.json 변경 시 리프레시
@@ -122,13 +236,20 @@ function refreshReviewStatus(reviewPath: string, decorationProvider: ReviewFileD
  * JSON 파일 검수용 웹뷰 패널을 생성하고 표시합니다.
  * @param context 확장 프로그램 컨텍스트.
  * @param filepath 검수할 JSON 파일의 전체 경로.
+ * @param isReadonly 패널을 읽기 전용 모드로 열지 여부.
  */
-function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
+function showStatusPanel(context: vscode.ExtensionContext, filepath: string, isReadonly: boolean) {
+  const columnToShowIn = vscode.ViewColumn.Beside; // 항상 옆에 표시
+
   // 이미 열려 있는 패널이 있는지 확인
   let panel = openReviewPanels.get(filepath);
   if (panel) {
-    panel.reveal(vscode.ViewColumn.Beside); // 이미 열려 있으면 해당 패널을 활성화
-    return; // 새 패널을 만들지 않고 종료
+    // 이미 열려 있으면 해당 패널을 활성화
+    panel.reveal(vscode.ViewColumn.Beside);
+    // ✨ 이미 열린 패널에 읽기 전용 상태 업데이트 메시지 전송
+    panel.webview.postMessage({ command: "setReadOnly", value: isReadonly });
+    // 새 패널을 만들지 않고 종료
+    return;
   }
 
   // 웹뷰 패널 생성 또는 가져오기
@@ -136,16 +257,33 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
   panel = vscode.window.createWebviewPanel(
     "reviewPanel", // 패널 유형의 고유 식별자
     `Review: ${path.basename(filepath)}`, // 패널 제목
-    vscode.ViewColumn.Beside, // 현재 에디터 옆에 패널 표시
-    { enableScripts: true } // 웹뷰에서 JavaScript 활성화
+    columnToShowIn, // 현재 에디터 옆에 패널 표시
+    { enableScripts: true, retainContextWhenHidden: true } // 스크립트 활성화 및 상태 유지
   );
   openReviewPanels.set(filepath, panel);
 
   // 패널이 닫힐 때 Map에서 제거 (사용자가 직접 닫았을 경우)
   panel.onDidDispose(
-    () => {
+    async () => {
+      // 1. 맵에서 자기 자신을 제거합니다.
       openReviewPanels.delete(filepath);
-      console.log(`Review panel for ${path.basename(filepath)} disposed by user.`);
+      console.log(`[Webview Close] 웹뷰 패널이 닫혔습니다: ${path.basename(filepath)}`);
+
+      // 2. 이 웹뷰와 연결된 텍스트 에디터를 찾습니다.
+      const targetEditor = vscode.window.visibleTextEditors.find((editor) => editor.document.uri.fsPath === filepath);
+
+      // 3. 에디터가 화면에 보이면 닫습니다.
+      if (targetEditor) {
+        console.log(`[Webview Close -> File Close] 관련 JSON 파일 '${path.basename(filepath)}'을(를) 닫습니다.`);
+
+        // VS Code 1.63 이상에서는 아래와 같이 간단하게 닫을 수 있습니다.
+        // 이는 에디터를 닫는 가장 안정적인 방법입니다.
+        await vscode.window.showTextDocument(targetEditor.document, {
+          viewColumn: targetEditor.viewColumn,
+          preserveFocus: false, // 포커스를 주지 않음
+        });
+        await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+      }
     },
     null,
     context.subscriptions
@@ -156,7 +294,7 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
   const scriptUri = panel.webview.asWebviewUri(scriptPath);
 
   // 웹뷰에 HTML 콘텐츠 설정
-  panel.webview.html = getWebviewHtml(panel.webview, scriptUri, path.basename(filepath));
+  panel.webview.html = getWebviewHtml(panel.webview, scriptUri, path.basename(filepath), isReadonly);
 
   // 1. 기존 검수 상태 로드 및 웹뷰에 전송
   const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -166,7 +304,6 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
   }
 
   const reviewPath = path.join(workspaceRootPath, `.review.json`);
-
   let existingReviews: any[] = [];
   if (fs.existsSync(reviewPath)) {
     try {
@@ -180,26 +317,13 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
     }
   }
 
-  const fullPath = filepath;
-  const filename = path.basename(fullPath);
-  const relativePath = path.relative(workspaceRootPath, fullPath); // 예: "workspace/llm-finetuning-data/ko-KR/..."
-  const pathSegments = relativePath.split(path.sep);
-
-  let processedPath = "";
-  // 2. 경로 세그먼트가 최소 1개 이상일 때만 처리합니다.
-  // (첫 번째 'workspace'만 건너뛰기 위함)
-  if (pathSegments.length >= 1) {
-    // 3. 인덱스 1부터의 세그먼트만 사용하여 새로운 경로를 생성합니다.
-    // 즉, 'workspace' (인덱스 0)만 제거합니다.
-    const desiredSegments = pathSegments.slice(1);
-    processedPath = desiredSegments.join(path.sep);
-  } else {
-    // 세그먼트가 없으면 빈 문자열 또는 에러 처리할 수 있습니다.
-    processedPath = "";
-  }
-
+  const relativePath = path.relative(workspaceRootPath, filepath);
+  const posixPath = relativePath.split(path.sep).join("/");
+  // 'workspace/' 접두사 제거 로직을 보다 안전하게 수정
+  const processedPath = posixPath.startsWith("workspace/") ? posixPath.substring("workspace/".length) : posixPath;
   const dirOnly = path.dirname(processedPath);
-  const currentPath = `./${dirOnly.replace(/\\/g, "/")}`;
+  const currentPath = `./${dirOnly}`;
+  const filename = path.basename(filepath);
   const currentFileReview = existingReviews.find((entry) => entry.path === currentPath && entry.filename === filename);
   console.log("DEBUG: Calculated currentPath for review.json:", currentPath);
 
@@ -209,6 +333,12 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
 
     // 메시지가 "saveStatus" 명령인지 확인
     if (message.command === "saveStatus") {
+      // ✨ 읽기 전용 모드일 경우 저장 로직을 실행하지 않음
+      if (isReadonly) {
+        vscode.window.showWarningMessage("이 파일은 할당되지 않아 저장할 수 없습니다.");
+        return;
+      }
+
       const now = new Date().toISOString();
       const hasNotice = !!message.notice?.trim();
       const hasReviewComment = !!message.review_comment?.trim();
@@ -255,6 +385,7 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
       try {
         fs.writeFileSync(reviewPath, JSON.stringify(existingReviews, null, 2));
         vscode.window.showInformationMessage(`Review status for ${path.basename(filepath)} saved successfully.`);
+
         // ✅ JSON 탭 닫기 시도
         const normalizedFilepath = path.resolve(filepath);
         const targetEditor = vscode.window.visibleTextEditors.find((editor) => {
@@ -264,8 +395,10 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
 
         if (targetEditor) {
           const document = targetEditor.document;
-          const viewColumn = targetEditor.viewColumn;
-          await vscode.window.showTextDocument(document, viewColumn);
+          if (document.isDirty) {
+            await document.save(); // 💾 변경사항 저장
+          }
+          await vscode.window.showTextDocument(document, targetEditor.viewColumn);
           await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
         } else {
           console.warn("JSON 파일 탭을 닫지 못했습니다: 열려 있는 에디터에서 찾지 못함");
@@ -280,14 +413,15 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
     }
   });
 
-  const gitUser = getGitUserName();
-
   // 웹뷰에 초기 데이터 전송 (DOM 로드 후 데이터 설정)
   // 웹뷰 스크립트에서 'initialData' 명령을 처리할 준비가 되어 있어야 함
+  const gitUser = getGitUserName();
   panel.webview.postMessage({
     command: "initialData",
     gitUserName: gitUser,
     data: currentFileReview, // 기존 데이터가 없으면 undefined가 될 수 있음
+    // ✨ isReadonly 상태도 함께 전달
+    isReadonly: isReadonly,
   });
 }
 
@@ -296,12 +430,15 @@ function showStatusPanel(context: vscode.ExtensionContext, filepath: string) {
  * @param webview 웹뷰 인스턴스.
  * @param scriptUri 웹뷰의 JavaScript 파일 URI.
  * @param filename 검수 중인 JSON 파일의 기본 이름.
+ * @param isReadonly 웹뷰를 읽기 전용으로 표시할지 여부.
  * @returns 웹뷰용 HTML 문자열.
  */
-function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri, filename: string): string {
+function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri, filename: string, isReadonly: boolean): string {
   // Tip: Install the es6-string-html extension for syntax highlighting in backticks
   const nonce = getNonce(); // For Content Security Policy
 
+  // isReadonly 값에 따라 body 클래스 결정
+  const bodyClass = isReadonly ? "readonly-mode" : "";
   return `
 			<!DOCTYPE html>
 			<html lang="en">
@@ -309,30 +446,33 @@ function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri, filename
 					<meta charset="UTF-8">
 					<meta name="viewport" content="width=device-width, initial-scale=1.0">
 					<title>Review Panel</title>
-					<meta http-equiv="Content-Security-Policy" 
-                content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline';">
+					<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline';">
 					<style>
 							body { 
-                font-family: sans-serif; 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
                 padding: 20px; 
               }
 							label { 
                 display: block; 
-                margin-bottom: 8px; 
+                margin-bottom: 8px;
+                cursor: pointer; /* 클릭 가능 영역임을 표시 */
               }
 							textarea { 
                 width: 100%; 
                 height: 100px; 
                 margin-bottom: 10px; 
                 padding: 8px; 
-                box-sizing: border-box; 
+                box-sizing: border-box;
+                border: 1px solid #ccc;
+                border-radius: 4px;
               }
 							button { 
                 padding: 10px 15px; 
                 background-color: #007acc; 
                 color: white; 
                 border: none; 
-                cursor: pointer; 
+                cursor: pointer;
+                border-radius: 4px;
               }
 							button:hover { 
                 background-color: #005f99; 
@@ -358,21 +498,40 @@ function getWebviewHtml(webview: vscode.Webview, scriptUri: vscode.Uri, filename
                 font-size: 0.8em;
                 color: #888;
               }
+
+              /* ✨ 읽기 전용 모드 스타일 ✨ */
+              body.readonly-mode input,
+              body.readonly-mode textarea,
+              body.readonly-mode select, /* <select> 박스 추가 */
+              body.readonly-mode button {
+                pointer-events: none; /* 마우스 이벤트 차단 */
+                background-color: #f0f0f0; /* 비활성화된 배경색 */
+                opacity: 0.7; /* 반투명하게 만들어 비활성화 시각적 효과 강화 */
+                color: #888; /* 텍스트 색상도 흐리게 */
+                border-color: #ddd; /* 테두리 색상도 흐리게 */
+              }
+              body.readonly-mode label,
+              body.readonly-mode button {
+                cursor: not-allowed; /* 커서 모양 변경 */
+              }
+              body.readonly-mode button#save-button {
+                display: none; /* 저장 버튼 숨기기 */
+              }
 					</style>
 			</head>
-			<body>
+			<body class="${bodyClass}">
 					<h3>${filename}</h3>
 					<label>
             <input type="checkbox" id="taskDone"> 작업 완료
-            <span id="taskMeta"></span>
+            <span id="taskMeta" class="inline-meta"></span>
           </label>
-					<textarea id="notice" placeholder="작업 코멘트 입력 (특이사항 등)"></textarea>
+					<textarea id="reporting" placeholder="특이사항 입력"></textarea>
           <label>
             <input type="checkbox" id="reviewDone"> 검수 완료
-            <span id="reviewMeta"></span>
+            <span id="reviewMeta" class="inline-meta"></span>
           </label>
 					<textarea id="comment" placeholder="검수 코멘트 입력"></textarea>
-					<button onclick="saveStatus()">저장</button>
+					<button id="save-button" onclick="saveStatus()">저장</button>
 
 					<script nonce="${nonce}" src="${scriptUri}"></script>
 			</body>
