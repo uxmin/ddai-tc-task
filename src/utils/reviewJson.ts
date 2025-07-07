@@ -1,6 +1,7 @@
+// .review.json 로드/업데이트
 import * as fs from "fs";
 import * as path from "path";
-import { ReviewMap } from "../reviewDecorationProvider";
+import { ReviewMap } from "../state";
 
 export function loadReviewJsonAsMap(jsonPath: string): ReviewMap {
   const result: ReviewMap = {};
@@ -16,6 +17,7 @@ export function loadReviewJsonAsMap(jsonPath: string): ReviewMap {
       const fullKey = path.posix.join(entry.path.replace(/^\.\/?/, ""), entry.filename);
       result[fullKey] = {
         path: entry.path,
+        filename: entry.filename,
         task_done: entry.task_done,
         tasked_by: entry.tasked_by,
         tasked_at: entry.tasked_at,

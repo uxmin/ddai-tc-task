@@ -1,68 +1,17 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-
-export interface FolderReviewStatus {
-  path: string;
-  task_done: boolean;
-  tasked_by: string;
-  tasked_at?: string; // 없을 수도 있음
-  review_done: boolean;
-  review_comment?: string; // 없을 수도 있음
-  reviewed_by: string;
-  reviewed_at?: string; // 없을 수도 있음
-  reporting?: string;
-}
-export type ReviewMap = Record<string, FolderReviewStatus>;
-
-export function loadReviewJson(file: string, root: string): Record<string, FolderReviewStatus> {
-  if (!fs.existsSync(file)) {
-    console.warn(`[loadReviewJson] File not found: ${file}`);
-    return {};
-  }
-
-  let raw: any[];
-  try {
-    const content = fs.readFileSync(file, "utf8");
-    raw = JSON.parse(content);
-    console.log(`[loadReviewJson] Successfully parsed ${Object.keys(raw).length} raw entries from ${file}`);
-  } catch (error) {
-    console.error(`[loadReviewJson] Error parsing JSON from ${file}:`, error);
-    return {}; // 파싱 실패 시 빈 객체 반환
-  }
-  const fixed: Record<string, FolderReviewStatus> = {};
-
-  for (const item of raw) {
-    // path와 filename 조합으로 키 구성
-    let rawPath = item.path.replace(/\\/g, "/"); // OS 상관없이 슬래시 통일
-
-    // './' 접두어 제거
-    if (rawPath.startsWith("./")) {
-      rawPath = rawPath.slice(2);
-    }
-
-    const key = `${rawPath}/${item.filename}`;
-    fixed[key] = item as FolderReviewStatus;
-  }
-
-  console.log(`[loadReviewJson] Final fixed review map contains ${Object.keys(fixed).length} entries.`);
-  return fixed;
-}
-
-export function toPosixPath(p: string): string {
-  return p.replace(/\\/g, "/");
-}
+import { ReviewMap } from "../state";
+import { toPosixPath } from "../utils";
 
 export class ReviewFileDecorationProvider implements vscode.FileDecorationProvider {
-  private reviewData: Record<string, FolderReviewStatus> = {}; // .review.json 데이터
+  private reviewData: ReviewMap = {};
   private allowedFiles: Set<string> = new Set(); // filename.xlsx에서 읽어온 허용 파일 목록
 
-  private _onDidChangeFileDecorations: vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined> =
-    new vscode.EventEmitter();
-  readonly onDidChangeFileDecorations: vscode.Event<vscode.Uri | vscode.Uri[] | undefined> =
-    this._onDidChangeFileDecorations.event;
+  private _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
+  readonly onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
 
-  constructor(initialData: Record<string, any>, allowedFiles: Set<string>) {
+  constructor(initialData: ReviewMap, allowedFiles: Set<string>) {
     this.reviewData = initialData;
     this.allowedFiles = allowedFiles;
   }
@@ -72,10 +21,11 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
     this._onDidChangeFileDecorations.fire(undefined);
   }
 
-  updateReviewData(newData: Record<string, FolderReviewStatus>) {
+  updateReviewData(newData: ReviewMap) {
     this.reviewData = newData;
     this._onDidChangeFileDecorations.fire(undefined); // 전체 업데이트
   }
+
   updateAllowedFiles(newAllowed: Set<string>) {
     this.allowedFiles = newAllowed;
     this._onDidChangeFileDecorations.fire(undefined);
@@ -88,7 +38,6 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
    * @returns 현재 검수 데이터 맵 (Record<string, any> 형태)
    */
   public getReviewData(): Record<string, any> {
-    // FolderReviewStatus 대신 any로 임시 설정
     // reviewData 객체의 복사본을 반환하여 외부에서 직접 수정하는 것을 방지할 수 있습니다.
     // 하지만 현재 사용 사례에서는 직접 수정하는 것이 아니라 조회만 하므로 얕은 복사본도 충분합니다.
     return { ...this.reviewData };
@@ -118,13 +67,12 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
       for (const file of filesInFolder) {
         const fullFilePath = path.join(folderPath, file);
         const stat = fs.lstatSync(fullFilePath);
+
         if (stat.isFile() && file.endsWith(".json") && file !== ".review.json" && this.allowedFiles.has(file)) {
           // 현재 파일의 workspace 기준 상대경로 만들기
           const relativePath = path.relative(workspaceRoot, fullFilePath);
-
           // 항상 POSIX 스타일로 통일
           const posixPath = relativePath.split(path.sep).join("/");
-
           if (this.allowedFiles.has(posixPath)) {
             return true; // 할당된 파일이 존재
           }
@@ -173,15 +121,17 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
     const reviewEntry = this.reviewData[keyToLookup];
 
     // 💡 디버깅을 위해 추가
-    // console.log(`[provideFileDecoration] URI: ${filePath}`);
-    // console.log(`[provideFileDecoration] Relative from Root: ${relativePathFromWorkspaceRoot}`);
-    // console.log(`[provideFileDecoration] Key to Lookup: ${keyToLookup}`);
-    // console.log(`[provideFileDecoration] Found Entry:`, reviewEntry ? "Yes" : "No");
+    console.log(`[provideFileDecoration] URI: ${filePath}`);
+    console.log(`[provideFileDecoration] Relative from Root: ${relativePathFromWorkspaceRoot}`);
+    console.log(`[provideFileDecoration] Key to Lookup: ${keyToLookup}`);
+    console.log(`[provideFileDecoration] Found Entry:`, reviewEntry ? "Yes" : "No");
 
     // Folder Deco
     if (this.isDirectory(uri)) {
       const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
-      if (!workspaceFolder) return undefined;
+      if (!workspaceFolder) {
+        return undefined;
+      }
 
       const hasForbiddenFile = this.checkIfFolderHasForbiddenFiles(filePath, workspaceFolder.uri.fsPath);
       if (hasForbiddenFile) {
@@ -196,9 +146,19 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
 
     // File Deco
     if (!filename.endsWith(".json") || filename === ".review.json") {
-      return; // 데코레이션 없음
+      return undefined; // 데코레이션 없음
     }
 
+    if (!reviewEntry) {
+      // return {
+      //   badge: "◌",
+      //   tooltip: "작업 대기 (미시작)",
+      // };
+      // .review.json에 등록된 파일이 아니면 아무 데코레이션도 하지 않음
+      return undefined;
+    }
+
+    // 4. ✨ 이제 리뷰 대상 파일임이 확실하므로, 사용자에게 할당되었는지 확인
     if (!this.allowedFiles.has(toPosixPath(keyToLookup))) {
       return {
         badge: "⛔",
@@ -207,16 +167,14 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
       };
     }
 
-    if (!reviewEntry) {
-      return {
-        badge: "◌",
-        tooltip: "작업 대기 (미시작)",
-      };
-    }
-
     const { task_done, review_done, review_comment, reporting } = reviewEntry;
     const isReportingEmpty = !(reporting ?? "");
     const isReviewCommentEmpty = !(review_comment ?? "");
+
+    console.log("task_done\t", task_done);
+    console.log("review_done\t", review_done);
+    console.log("review_comment\t", review_comment);
+    console.log("reporting\t", reporting);
 
     if (!task_done && isReportingEmpty && !review_done && isReviewCommentEmpty) {
       return {

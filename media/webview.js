@@ -76,6 +76,7 @@
                        </span>`
             : "";
 
+        console.log(message.isReadonly);
         // ✨ 초기 읽기 전용 상태 설정 (가장 중요)
         setReadOnlyMode(message.isReadonly);
         break;

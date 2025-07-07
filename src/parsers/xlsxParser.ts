@@ -1,7 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import * as XLSX from "xlsx";
-import { toPosixPath } from "./reviewDecorationProvider";
+import { toPosixPath } from "../utils";
 
 export function parseXlsxFile(xlsxPath: string, gitUser: string): string[] {
   const allowedFiles = new Set<string>();
@@ -19,8 +19,7 @@ export function parseXlsxFile(xlsxPath: string, gitUser: string): string[] {
 
     if (filepathIdx === -1 || filenameIdx === -1 || workerIdx === -1) {
       vscode.window.showWarningMessage(
-        `'${xlsxPath}' 파일에 'filepath', 'filename', 'worker' 헤더가 모두 존재해야 합니다.`,
-        { modal: false }
+        `'${xlsxPath}' 파일에 'filepath', 'filename', 'worker' 헤더가 모두 존재해야 합니다.`
       );
       return Array.from(allowedFiles);
     }
@@ -28,7 +27,6 @@ export function parseXlsxFile(xlsxPath: string, gitUser: string): string[] {
     // 두 번째 행부터 데이터 읽기
     for (let i = 1; i < jsonData.length; i++) {
       const row: any = jsonData[i];
-
       const filepath = row[filepathIdx];
       const filename = row[filenameIdx];
       const worker = row[workerIdx];
@@ -47,8 +45,7 @@ export function parseXlsxFile(xlsxPath: string, gitUser: string): string[] {
     }
   } catch (error) {
     vscode.window.showErrorMessage(
-      `Error parsing XLSX file: ${error instanceof Error ? error.message : String(error)}`,
-      { modal: false }
+      `Error parsing XLSX file: ${error instanceof Error ? error.message : String(error)}`
     );
   }
   return Array.from(allowedFiles);
