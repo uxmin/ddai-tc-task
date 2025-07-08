@@ -36,6 +36,9 @@ export const state: ExtensionState = {
 // 다른 모듈에서는 이 Map에 직접 접근하지 않습니다.
 export const openReviewPanels = new Map<string, vscode.WebviewPanel>();
 
+// 활성화 된 뷰 학인
+export let previouslyVisibleJsonFiles: Set<string> = new Set();
+
 export const FORBIDDEN_FILES = new Set<string>([
   ".review.json",
   ".gitignore",

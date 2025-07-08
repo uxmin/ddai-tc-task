@@ -121,10 +121,10 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
     const reviewEntry = this.reviewData[keyToLookup];
 
     // 💡 디버깅을 위해 추가
-    console.log(`[provideFileDecoration] URI: ${filePath}`);
-    console.log(`[provideFileDecoration] Relative from Root: ${relativePathFromWorkspaceRoot}`);
-    console.log(`[provideFileDecoration] Key to Lookup: ${keyToLookup}`);
-    console.log(`[provideFileDecoration] Found Entry:`, reviewEntry ? "Yes" : "No");
+    // console.log(`[provideFileDecoration] URI: ${filePath}`);
+    // console.log(`[provideFileDecoration] Relative from Root: ${relativePathFromWorkspaceRoot}`);
+    // console.log(`[provideFileDecoration] Key to Lookup: ${keyToLookup}`);
+    // console.log(`[provideFileDecoration] Found Entry:`, reviewEntry ? "Yes" : "No");
 
     // Folder Deco
     if (this.isDirectory(uri)) {
@@ -171,10 +171,10 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
     const isReportingEmpty = !(reporting ?? "");
     const isCommentEmpty = !(comment ?? "");
 
-    console.log("task_done\t", task_done);
-    console.log("review_done\t", review_done);
-    console.log("comment\t", comment);
-    console.log("reporting\t", reporting);
+    // console.log("task_done\t", task_done);
+    // console.log("review_done\t", review_done);
+    // console.log("comment\t", comment);
+    // console.log("reporting\t", reporting);
 
     let mainBadge: string;
     let mainTooltip: string;

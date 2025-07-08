@@ -64,6 +64,6 @@ export function loadReviewJson(file: string): ReviewMap {
     vscode.window.showErrorMessage(`.review.json 파일을 읽거나 파싱하는 데 실패했습니다: ${error}`);
   }
 
-  console.log(`[loadReviewJson] Loaded keys:`, Object.keys(reviewMap));
+  // console.log(`[loadReviewJson] Loaded keys:`, Object.keys(reviewMap));
   return reviewMap;
 }

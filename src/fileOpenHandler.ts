@@ -1,7 +1,7 @@
 // 파일 열기 및 읽기 전용 처리
 import * as path from "path";
 import * as vscode from "vscode";
-import { FORBIDDEN_FILES, openReviewPanels, READONLY_SCHEME, state } from "./state";
+import { FORBIDDEN_FILES, READONLY_SCHEME, state } from "./state";
 import { normalizePath } from "./utils/pathUtils";
 import { showStatusPanel } from "./webview/showStatusPanel";
 
@@ -66,24 +66,43 @@ export function setupFileEventHandlers(context: vscode.ExtensionContext) {
     })
   );
 
-  // JSON 문서 닫힐 때 패널도 닫기
-  context.subscriptions.push(
-    vscode.workspace.onDidCloseTextDocument((document) => {
-      const closedFilePath = document.uri.fsPath;
-      // openReviewPanels 맵에서 해당 경로의 패널을 찾습니다.
-      const panelToClose = openReviewPanels.get(closedFilePath);
+  // // JSON 문서 닫힐 때 패널도 닫기
+  // context.subscriptions.push(
+  //   vscode.window.onDidChangeVisibleTextEditors((editors) => {
+  //     console.log("👀 변경 감지");
 
-      // 패널이 존재하면 닫습니다.
-      if (panelToClose) {
-        console.log(
-          `[File Close -> Webview Close] JSON 파일 '${path.basename(closedFilePath)}'이(가) 닫혀 관련 웹뷰를 닫습니다.`
-        );
+  //     const currentlyVisibleJsonFiles = new Set<string>();
+  //     for (const editor of editors) {
+  //       const filePath = editor.document.uri.fsPath;
+  //       if (filePath.endsWith(".json") && !path.basename(filePath).endsWith(".review.json")) {
+  //         const posixPath = normalizePath(state.workspaceRoot, filePath);
+  //         currentlyVisibleJsonFiles.add(posixPath);
+  //       }
+  //     }
 
-        // onDidDispose가 자동으로 호출되므로 맵에서 직접 삭제할 필요가 없습니다.
-        panelToClose.dispose();
-      }
-    })
-  );
+  //     const closedFiles = new Set<string>();
+  //     for (const oldFile of previouslyVisibleJsonFiles) {
+  //       if (!currentlyVisibleJsonFiles.has(oldFile)) {
+  //         closedFiles.add(oldFile);
+  //       }
+  //     }
+
+  //     for (const closedFileKey of closedFiles) {
+  //       const panelToClose = openReviewPanels.get(closedFileKey);
+  //       if (panelToClose) {
+  //         console.log(
+  //           `[탭 닫힘 감지 -> 웹뷰 닫기] 파일 '${path.basename(closedFileKey)}'의 탭이 닫혀 웹뷰를 닫습니다.`
+  //         );
+  //         panelToClose.dispose();
+  //       }
+  //     }
+
+  //     previouslyVisibleJsonFiles.clear();
+  //     for (const file of currentlyVisibleJsonFiles) {
+  //       previouslyVisibleJsonFiles.add(file);
+  //     }
+  //   })
+  // );
 }
 
 export { openFileWithCorrectMode };
