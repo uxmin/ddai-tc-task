@@ -6,13 +6,12 @@ export interface ReviewStatus {
   path: string;
   filename: string;
   task_done: boolean;
-  notice?: string;
   tasked_by: string;
   tasked_at?: string;
   review_done: boolean;
-  review_comment?: string;
   reviewed_by: string;
   reviewed_at?: string;
+  comment?: string;
   reporting?: string;
 }
 

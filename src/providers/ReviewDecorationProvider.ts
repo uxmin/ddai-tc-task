@@ -167,50 +167,45 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
       };
     }
 
-    const { task_done, review_done, review_comment, reporting } = reviewEntry;
+    const { task_done, review_done, comment, reporting } = reviewEntry;
     const isReportingEmpty = !(reporting ?? "");
-    const isReviewCommentEmpty = !(review_comment ?? "");
+    const isCommentEmpty = !(comment ?? "");
 
     console.log("task_done\t", task_done);
     console.log("review_done\t", review_done);
-    console.log("review_comment\t", review_comment);
+    console.log("comment\t", comment);
     console.log("reporting\t", reporting);
 
-    if (!task_done && isReportingEmpty && !review_done && isReviewCommentEmpty) {
-      return {
-        badge: "◌",
-        tooltip: "작업 대기 (미시작)",
-      };
-    } else if (task_done && isReportingEmpty && !review_done && isReviewCommentEmpty) {
-      return {
-        badge: "T",
-        color: new vscode.ThemeColor("charts.yellow"),
-        tooltip: "작업 완료 (검수 미완)",
-      };
-    } else if (task_done && !isReportingEmpty && !review_done && isReviewCommentEmpty) {
-      return {
-        badge: "T!",
-        color: new vscode.ThemeColor("charts.orange"),
-        tooltip: "작업 완료, 특이사항 있음 (검수 대기)",
-      };
-    } else if (task_done && review_done && isReviewCommentEmpty) {
-      return {
-        badge: "✓",
-        color: new vscode.ThemeColor("charts.green"),
-        tooltip: "작업 및 검수 완료",
-      };
-    } else if (task_done && review_done && !isReviewCommentEmpty) {
-      return {
-        badge: "💬",
-        color: new vscode.ThemeColor("charts.blue"),
-        tooltip: "작업 및 검수 완료 (코멘트 있음)",
-      };
+    let mainBadge: string;
+    let mainTooltip: string;
+    let mainColor: vscode.ThemeColor | undefined = undefined;
+
+    if (!task_done && !review_done) {
+      mainBadge = "◌";
+      mainTooltip = "작업 대기 (미시작)";
+    } else if (task_done && !review_done) {
+      mainBadge = "T";
+      mainTooltip = "작업 완료 (검수 미완)";
+      mainColor = new vscode.ThemeColor("gitDecoration.modifiedResourceForeground");
+    } else if (task_done && review_done) {
+      mainBadge = "✓";
+      mainTooltip = "작업 및 검수 완료";
+      mainColor = new vscode.ThemeColor("charts.green");
     } else {
-      return {
-        badge: "❌",
-        tooltip: "상태 오류 (순차적이지 않음)",
-        color: new vscode.ThemeColor("charts.red"),
-      };
+      mainBadge = "❌";
+      mainTooltip = "상태 오류 (순차적이지 않음)";
+      mainColor = new vscode.ThemeColor("charts.red");
     }
+
+    let flags = "";
+    if (!isCommentEmpty || !isReportingEmpty) {
+      flags += "💬";
+    }
+
+    return {
+      badge: `${mainBadge}${flags}`,
+      tooltip: `${mainTooltip}${!isCommentEmpty ? " (코멘트 있음)" : ""}${!isReportingEmpty ? " (리포팅 있음)" : ""}`,
+      color: mainColor,
+    };
   }
 }

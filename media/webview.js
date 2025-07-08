@@ -2,7 +2,9 @@
   const vscode = acquireVsCodeApi();
 
   function formatDateTime(isoString) {
-    if (!isoString) return "";
+    if (!isoString) {
+      return "";
+    }
     const date = new Date(isoString);
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0"); // 0-based
@@ -13,7 +15,9 @@
   }
 
   function formatUser(name, currentUser) {
-    if (!name) return "@me"; // 저장 안된 상태
+    if (!name) {
+      return "@me";
+    } // 저장 안된 상태
     return name === currentUser ? "@me" : `@${name}`;
   }
 
@@ -29,7 +33,7 @@
     document.querySelector("button").addEventListener("click", () => {
       const taskDone = document.getElementById("taskDone").checked;
       const reviewDone = document.getElementById("reviewDone").checked;
-      const reviewComment = document.getElementById("comment").value;
+      const comment = document.getElementById("comment").value;
       const reporting = document.getElementById("reporting").value;
 
       console.log("📤 saveStatus message 전송");
@@ -37,7 +41,7 @@
         command: "saveStatus",
         task_done: taskDone,
         review_done: reviewDone,
-        review_comment: reviewComment,
+        comment: comment,
         reporting: reporting,
       });
     });
@@ -55,26 +59,24 @@
 
         document.getElementById("taskDone").checked = data.task_done || false;
         document.getElementById("reviewDone").checked = data.review_done || false;
-        document.getElementById("comment").value = data.review_comment || "";
+        document.getElementById("comment").value = data.comment || "";
         document.getElementById("reporting").value = data.reporting || "";
 
         const taskMetaEl = document.getElementById("taskMeta");
-        taskMetaEl.innerHTML =
-          data.task_done || data.reporting
-            ? `<span class="inline-meta">
+        taskMetaEl.innerHTML = data.task_done
+          ? `<span class="inline-meta">
                         <span class="badge">${formatUser(data.tasked_by, currentUser)}</span>
                         <span class="meta-time"> ${formatDateTime(data.tasked_at)}</span>
                        </span>`
-            : "";
+          : "";
 
         const reviewMetaEl = document.getElementById("reviewMeta");
-        reviewMetaEl.innerHTML =
-          data.review_done || data.review_comment
-            ? `<span class="inline-meta">
+        reviewMetaEl.innerHTML = data.review_done
+          ? `<span class="inline-meta">
                         <span class="badge">${formatUser(data.reviewed_by, currentUser)}</span>
                         <span class="meta-time"> ${formatDateTime(data.reviewed_at)}</span>
                        </span>`
-            : "";
+          : "";
 
         console.log(message.isReadonly);
         // ✨ 초기 읽기 전용 상태 설정 (가장 중요)

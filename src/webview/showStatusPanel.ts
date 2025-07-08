@@ -113,36 +113,35 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
       }
 
       const now = new Date().toISOString();
-      const hasNotice = !!message.notice?.trim();
-      const hasReviewComment = !!message.review_comment?.trim();
 
       // 이전 값과 비교해서 상태 변경 여부 판단
       const isTaskChanged = message.task_done !== currentFileReview?.task_done;
-      const isNoticeChanged = message.notice !== currentFileReview?.notice;
       const isReviewChanged = message.review_done !== currentFileReview?.review_done;
-      const isCommentChanged = message.review_comment !== currentFileReview?.review_comment;
 
       const newStatus: any = {
         path: currentPath,
         filename: path.basename(filepath),
+
         task_done: message.task_done,
-        notice: message.notice,
         tasked_by: "",
-        tasked_at:
-          message.task_done || hasNotice
-            ? isTaskChanged || isNoticeChanged
-              ? now
-              : currentFileReview?.tasked_at || ""
-            : currentFileReview?.tasked_at || "",
+        tasked_at: (() => {
+          if (isTaskChanged && message.task_done) {
+            return now;
+          }
+          return currentFileReview?.tasked_at || "";
+        })(),
+
         review_done: message.review_done,
-        review_comment: message.review_comment,
         reviewed_by: "",
-        reviewed_at:
-          message.review_done || hasReviewComment
-            ? isReviewChanged || isCommentChanged
-              ? now
-              : currentFileReview?.reviewed_at || ""
-            : currentFileReview?.reviewed_at || "",
+        reviewed_at: (() => {
+          if (isReviewChanged && message.review_done) {
+            return now;
+          }
+          return currentFileReview?.reviewed_at || "";
+        })(),
+
+        comment: message.comment,
+        reporting: message.reporting,
       };
 
       const existingIndex = existingReviews.findIndex(

@@ -25,7 +25,6 @@ export function registerCommands(context: vscode.ExtensionContext) {
       }
 
       if (filePath && filePath.endsWith(".json")) {
-        console.log("DFDFDFDF");
         showStatusPanel(context, filePath, false);
       } else if (filePath) {
         vscode.window.showWarningMessage("The selected file is not a JSON file.", { modal: false });
