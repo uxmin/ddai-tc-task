@@ -102,6 +102,7 @@ export function getWebviewHtml(
 			</head>
 			<body class="${bodyClass}">
 					<h3>${filename}</h3>
+          <br/>
 					<label>
             <input type="checkbox" id="taskDone"> 작업 완료
             <span id="taskMeta" class="inline-meta"></span>
@@ -113,7 +114,6 @@ export function getWebviewHtml(
 					<textarea id="comment" placeholder="작업 및 검수 코멘트 입력"></textarea>
           <textarea id="reporting" placeholder="파일 특이사항 입력"></textarea>
 					<button id="save-button" onclick="saveStatus()">저장</button>
-
 					<script nonce="${nonce}" src="${scriptUri}"></script>
 			</body>
 			</html>

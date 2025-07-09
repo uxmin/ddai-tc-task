@@ -13,6 +13,7 @@ export interface ReviewStatus {
   reviewed_at?: string;
   comment?: string;
   reporting?: string;
+  daily?: boolean;
 }
 
 // 파일 경로를 키로 가지는 리뷰 데이터 맵 타입
@@ -20,6 +21,9 @@ export type ReviewMap = Record<string, ReviewStatus>;
 
 export interface ExtensionState {
   workspaceRoot: string;
+  xlsxPath: string;
+  reviewPath: string;
+  gitUser: string;
   allowedFiles: Set<string>;
   allowedFilesFromReviewJson: Set<string>;
   isChecking: boolean; // 무한 루프 방지 플래그
@@ -27,6 +31,9 @@ export interface ExtensionState {
 
 export const state: ExtensionState = {
   workspaceRoot: "",
+  xlsxPath: "",
+  reviewPath: "",
+  gitUser: "",
   allowedFiles: new Set<string>(),
   allowedFilesFromReviewJson: new Set<string>(),
   isChecking: false,
@@ -39,15 +46,17 @@ export const openReviewPanels = new Map<string, vscode.WebviewPanel>();
 // 활성화 된 뷰 학인
 export let previouslyVisibleJsonFiles: Set<string> = new Set();
 
+export const READONLY_SCHEME = "readonly-file";
+export const XLSX_FILENAME = "workfile.xlsx";
+export const REVIEW_JSON_FILENAME = ".review.json";
+export const WORK_FOLDER = "workspace";
+export const WORK_EXT = "json";
+
 export const FORBIDDEN_FILES = new Set<string>([
-  ".review.json",
+  REVIEW_JSON_FILENAME,
   ".gitignore",
   "generate.sh",
   "listup.sh",
   "merge_task_status.py",
   "merge-task-status.yml",
 ]);
-
-export const READONLY_SCHEME = "readonly-file";
-export const XLSX_FILENAME = "workfile.xlsx";
-export const REVIEW_JSON_FILENAME = ".review.json";

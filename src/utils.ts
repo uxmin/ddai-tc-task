@@ -2,7 +2,7 @@ import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { ReviewMap } from "./state";
+import { ReviewMap, state } from "./state";
 
 export function toPosixPath(p: string): string {
   return p.replace(/\\/g, "/");
@@ -39,15 +39,15 @@ export function getNonce() {
  * @param workspaceRoot 워크스페이스 루트 경로
  * @returns 파일 경로를 키로 하는 ReviewMap 객체
  */
-export function loadReviewJson(file: string): ReviewMap {
+export function loadReviewJson(): ReviewMap {
   const reviewMap: ReviewMap = {};
 
-  if (!fs.existsSync(file)) {
+  if (!fs.existsSync(state.reviewPath)) {
     return reviewMap;
   }
 
   try {
-    const fileContent = fs.readFileSync(file, "utf-8");
+    const fileContent = fs.readFileSync(state.reviewPath, "utf-8");
     const reviews: any[] = JSON.parse(fileContent);
 
     for (const entry of reviews) {

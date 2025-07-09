@@ -21,14 +21,14 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // 초기 설정
-  const gitUser = getGitUserName();
-  const xlsxPath = path.join(state.workspaceRoot, XLSX_FILENAME);
-  const reviewPath: string = path.join(state.workspaceRoot, REVIEW_JSON_FILENAME);
+  state.gitUser = getGitUserName();
+  state.xlsxPath = path.join(state.workspaceRoot, XLSX_FILENAME);
+  state.reviewPath = path.join(state.workspaceRoot, REVIEW_JSON_FILENAME);
 
-  const initialAllowedFiles = fs.existsSync(xlsxPath) ? parseXlsxFile(xlsxPath, gitUser) : [];
+  const initialAllowedFiles = fs.existsSync(state.xlsxPath) ? parseXlsxFile() : [];
   state.allowedFiles = new Set(initialAllowedFiles);
 
-  const initialReviewMap = loadReviewJson(reviewPath);
+  const initialReviewMap = loadReviewJson();
   state.allowedFilesFromReviewJson = new Set<string>(Object.keys(initialReviewMap));
 
   // Provider 등록

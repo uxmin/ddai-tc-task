@@ -1,12 +1,13 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import * as XLSX from "xlsx";
+import { state } from "../state";
 import { toPosixPath } from "../utils";
 
-export function parseXlsxFile(xlsxPath: string, gitUser: string): string[] {
+export function parseXlsxFile(): string[] {
   const allowedFiles = new Set<string>();
   try {
-    const workbook = XLSX.readFile(xlsxPath);
+    const workbook = XLSX.readFile(state.xlsxPath);
     const sheetName = workbook.SheetNames[0]; // 첫 번째 시트 사용
     const worksheet = workbook.Sheets[sheetName];
     const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }); // 헤더 포함하여 JSON으로 변환
@@ -19,7 +20,7 @@ export function parseXlsxFile(xlsxPath: string, gitUser: string): string[] {
 
     if (filepathIdx === -1 || filenameIdx === -1 || workerIdx === -1) {
       vscode.window.showWarningMessage(
-        `'${xlsxPath}' 파일에 'filepath', 'filename', 'worker' 헤더가 모두 존재해야 합니다.`
+        `'${state.xlsxPath}' 파일에 'filepath', 'filename', 'worker' 헤더가 모두 존재해야 합니다.`
       );
       return Array.from(allowedFiles);
     }
@@ -37,7 +38,7 @@ export function parseXlsxFile(xlsxPath: string, gitUser: string): string[] {
         typeof worker === "string" &&
         filepath.trim() !== "" &&
         filename.trim() !== "" &&
-        worker.trim() === gitUser
+        worker.trim() === state.gitUser
       ) {
         const fullPath = path.posix.join(filepath.trim(), filename.trim());
         allowedFiles.add(toPosixPath(fullPath));

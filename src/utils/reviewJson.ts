@@ -1,7 +1,7 @@
 // .review.json 로드/업데이트
 import * as fs from "fs";
 import * as path from "path";
-import { ReviewMap } from "../state";
+import { REVIEW_JSON_FILENAME, ReviewMap } from "../state";
 
 export function loadReviewJsonAsMap(jsonPath: string): ReviewMap {
   const result: ReviewMap = {};
@@ -32,7 +32,7 @@ export function loadReviewJsonAsMap(jsonPath: string): ReviewMap {
       };
     }
   } catch (err) {
-    console.error(`.review.json 파싱 실패: ${err}`);
+    console.error(`${REVIEW_JSON_FILENAME} 파싱 실패: ${err}`);
   }
 
   return result;

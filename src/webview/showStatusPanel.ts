@@ -1,8 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { openReviewPanels } from "../state";
-import { getGitUserName } from "../utils";
+import { openReviewPanels, REVIEW_JSON_FILENAME, state } from "../state";
+import { loadReviewJson } from "../utils";
+import { normalizePath } from "../utils/pathUtils";
 import { getWebviewHtml } from "./getWebviewHtml";
 
 /**
@@ -12,7 +13,11 @@ import { getWebviewHtml } from "./getWebviewHtml";
  * @param isReadonly 패널을 읽기 전용 모드로 열지 여부.
  */
 export function showStatusPanel(context: vscode.ExtensionContext, filepath: string, isReadonly: boolean) {
-  const columnToShowIn = vscode.ViewColumn.Beside;
+  // 작업 파일 대상이 아닌 경우에는 패널을 열지 않음
+  const relativePath = normalizePath(state.workspaceRoot, filepath);
+  if (!state.allowedFilesFromReviewJson.has(relativePath)) {
+    return;
+  }
 
   // 이미 열려 있는 패널이 있는지 확인
   let panel = openReviewPanels.get(filepath);
@@ -30,7 +35,7 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
   panel = vscode.window.createWebviewPanel(
     "reviewPanel", // 패널 유형의 고유 식별자
     `Review: ${path.basename(filepath)}`, // 패널 제목
-    columnToShowIn, // 현재 에디터 옆에 패널 표시
+    vscode.ViewColumn.Beside, // 현재 에디터 옆에 패널 표시
     { enableScripts: true, retainContextWhenHidden: true } // 스크립트 활성화 및 상태 유지
   );
   openReviewPanels.set(filepath, panel);
@@ -72,33 +77,33 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
   // 1. 기존 검수 상태 로드 및 웹뷰에 전송
   const workspaceRootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspaceRootPath) {
-    vscode.window.showErrorMessage("워크스페이스 루트 경로를 찾을 수 없습니다. .review.json을 저장할 수 없습니다.");
+    vscode.window.showErrorMessage(
+      `워크스페이스 루트 경로를 찾을 수 없습니다. ${REVIEW_JSON_FILENAME}을 저장할 수 없습니다.`
+    );
     return;
   }
 
-  const reviewPath = path.join(workspaceRootPath, `.review.json`);
   let existingReviews: any[] = [];
-  if (fs.existsSync(reviewPath)) {
+  if (fs.existsSync(state.reviewPath)) {
     try {
-      const fileContent = fs.readFileSync(reviewPath, "utf-8");
+      const fileContent = fs.readFileSync(state.reviewPath, "utf-8");
       existingReviews = JSON.parse(fileContent);
     } catch (error) {
       vscode.window.showErrorMessage(
-        `.review.json을 읽거나 파싱하는 데 실패했습니다: ${error instanceof Error ? error.message : String(error)}`
+        `${REVIEW_JSON_FILENAME}을 읽거나 파싱하는 데 실패했습니다: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
       // 읽기 실패 시 빈 상태로 시작
     }
   }
 
-  const relativePath = path.relative(workspaceRootPath, filepath);
-  const posixPath = relativePath.split(path.sep).join("/");
-  // 'workspace/' 접두사 제거 로직을 보다 안전하게 수정
-  const processedPath = posixPath.startsWith("workspace/") ? posixPath.substring("workspace/".length) : posixPath;
-  const dirOnly = path.dirname(processedPath);
-  const currentPath = `./${dirOnly}`;
-  const filename = path.basename(filepath);
-  const currentFileReview = existingReviews.find((entry) => entry.path === currentPath && entry.filename === filename);
-  console.log("DEBUG: Calculated currentPath for review.json:", currentPath);
+  const reviewMap = loadReviewJson();
+  const processedPath = normalizePath(workspaceRootPath, filepath);
+  const currentFileReview = reviewMap[processedPath];
+  const currentPath = `./${path.dirname(processedPath)}`;
+
+  console.log(`DEBUG: Calculated currentPath for ${REVIEW_JSON_FILENAME}`);
 
   // 웹뷰에서 확장 프로그램으로 전송된 메시지 처리
   panel.webview.onDidReceiveMessage(async (message) => {
@@ -123,8 +128,16 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
         filename: path.basename(filepath),
 
         task_done: message.task_done,
-        tasked_by: "",
+        tasked_by: (() => {
+          if (message.task_done) {
+            return currentFileReview?.tasked_by || "";
+          }
+          return "";
+        })(),
         tasked_at: (() => {
+          if (!message.task_done) {
+            return "";
+          }
           if (isTaskChanged && message.task_done) {
             return now;
           }
@@ -132,8 +145,16 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
         })(),
 
         review_done: message.review_done,
-        reviewed_by: "",
+        reviewed_by: (() => {
+          if (message.review_done) {
+            return currentFileReview?.reviewed_by || "";
+          }
+          return "";
+        })(),
         reviewed_at: (() => {
+          if (!message.review_done) {
+            return "";
+          }
           if (isReviewChanged && message.review_done) {
             return now;
           }
@@ -155,7 +176,7 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
       }
 
       try {
-        fs.writeFileSync(reviewPath, JSON.stringify(existingReviews, null, 2));
+        fs.writeFileSync(state.reviewPath, JSON.stringify(existingReviews, null, 2));
         vscode.window.showInformationMessage(`Review status for ${path.basename(filepath)} saved successfully.`);
 
         // ✅ JSON 탭 닫기 시도
@@ -179,7 +200,7 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
         panel.dispose();
       } catch (error) {
         vscode.window.showErrorMessage(
-          `.review.json을 쓰는 데 실패했습니다: ${error instanceof Error ? error.message : String(error)}`
+          `${REVIEW_JSON_FILENAME}을 쓰는 데 실패했습니다: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
@@ -187,12 +208,10 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
 
   // 웹뷰에 초기 데이터 전송 (DOM 로드 후 데이터 설정)
   // 웹뷰 스크립트에서 'initialData' 명령을 처리할 준비가 되어 있어야 함
-  const gitUser = getGitUserName();
   panel.webview.postMessage({
     command: "initialData",
-    gitUserName: gitUser,
+    gitUserName: state.gitUser,
     data: currentFileReview, // 기존 데이터가 없으면 undefined가 될 수 있음
-    // ✨ isReadonly 상태도 함께 전달
     isReadonly: isReadonly,
   });
 }

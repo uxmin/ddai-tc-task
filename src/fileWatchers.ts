@@ -1,11 +1,10 @@
 // 파일 워처 관련
-import * as path from "path";
 import * as vscode from "vscode";
 import { parseXlsxFile } from "./parsers/xlsxParser";
 import { FilteredFileTreeProvider } from "./providers/FilteredFileTreeProvider";
 import { ReviewFileDecorationProvider } from "./providers/ReviewDecorationProvider";
 import { REVIEW_JSON_FILENAME, state, XLSX_FILENAME } from "./state";
-import { getGitUserName, loadReviewJson } from "./utils";
+import { loadReviewJson } from "./utils";
 
 export function setupFileWatchers(
   context: vscode.ExtensionContext,
@@ -16,10 +15,9 @@ export function setupFileWatchers(
   const reviewJsonWatcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(state.workspaceRoot, REVIEW_JSON_FILENAME)
   );
-  const reviewPath: string = path.join(state.workspaceRoot, REVIEW_JSON_FILENAME);
 
-  reviewJsonWatcher.onDidCreate(() => refreshReviewStatus(reviewPath, decorationProvider));
-  reviewJsonWatcher.onDidChange(() => refreshReviewStatus(reviewPath, decorationProvider));
+  reviewJsonWatcher.onDidCreate(() => refreshReviewStatus(decorationProvider));
+  reviewJsonWatcher.onDidChange(() => refreshReviewStatus(decorationProvider));
   reviewJsonWatcher.onDidDelete(() => {
     decorationProvider.updateReviewData({});
     state.allowedFilesFromReviewJson = new Set<string>();
@@ -29,11 +27,8 @@ export function setupFileWatchers(
   const xlsxWatcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(state.workspaceRoot, XLSX_FILENAME)
   );
-  const xlsxPath = path.join(state.workspaceRoot, XLSX_FILENAME);
-  const gitUser = getGitUserName();
-
   const updateAllowedFiles = (message: string) => {
-    const updatedFiles = parseXlsxFile(xlsxPath, gitUser);
+    const updatedFiles = parseXlsxFile();
     state.allowedFiles = new Set(updatedFiles);
     decorationProvider.updateAllowedFiles(state.allowedFiles);
     treeProvider.refresh(updatedFiles); // ✨ TreeView 갱신
@@ -57,8 +52,8 @@ export function setupFileWatchers(
 }
 
 // ✅ .review.json 변경 시 리프레시
-function refreshReviewStatus(reviewPath: string, decorationProvider: ReviewFileDecorationProvider) {
-  const updatedReviewMap = loadReviewJson(reviewPath);
+function refreshReviewStatus(decorationProvider: ReviewFileDecorationProvider) {
+  const updatedReviewMap = loadReviewJson();
   decorationProvider.updateReviewData(updatedReviewMap);
   state.allowedFilesFromReviewJson = new Set<string>(Object.keys(updatedReviewMap));
 }

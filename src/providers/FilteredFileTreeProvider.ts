@@ -1,6 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import { state } from "../state";
+import { state, WORK_FOLDER } from "../state";
 
 // TreeItem을 상속하여 파일 경로를 저장할 수 있도록 확장합니다.
 class FileTreeItem extends vscode.TreeItem {
@@ -50,7 +50,7 @@ export class FilteredFileTreeProvider implements vscode.TreeDataProvider<FileTre
     } else {
       // 루트 레벨의 아이템들을 반환합니다.
       const items = this.includedFiles.map((filepath) => {
-        const absolutePath = path.join(state.workspaceRoot, "workspace", filepath); // 실제 파일 시스템 경로로 변환
+        const absolutePath = path.join(state.workspaceRoot, WORK_FOLDER, filepath); // 실제 파일 시스템 경로로 변환
         return new FileTreeItem(vscode.Uri.file(absolutePath), vscode.TreeItemCollapsibleState.None);
       });
       return Promise.resolve(items);
