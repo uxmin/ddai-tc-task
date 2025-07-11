@@ -20,6 +20,7 @@ export interface ReviewStatus {
 export type ReviewMap = Record<string, ReviewStatus>;
 
 export interface ExtensionState {
+  mode: string | undefined;
   workspaceRoot: string;
   xlsxPath: string;
   reviewPath: string;
@@ -30,6 +31,7 @@ export interface ExtensionState {
 }
 
 export const state: ExtensionState = {
+  mode: "",
   workspaceRoot: "",
   xlsxPath: "",
   reviewPath: "",
