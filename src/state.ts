@@ -1,5 +1,7 @@
 // 상태 관리
 import * as vscode from "vscode";
+import { FilteredFileTreeProvider } from "./providers/FilteredFileTreeProvider";
+import { ReviewFileDecorationProvider } from "./providers/ReviewDecorationProvider";
 
 // review.json 항목의 타입 정의
 export interface ReviewStatus {
@@ -28,10 +30,12 @@ export interface ExtensionState {
   allowedFiles: Set<string>;
   allowedFilesFromReviewJson: Set<string>;
   isChecking: boolean; // 무한 루프 방지 플래그
+  decorationProvider: ReviewFileDecorationProvider | undefined;
+  treeProvider: FilteredFileTreeProvider | undefined;
 }
 
 export const state: ExtensionState = {
-  mode: "",
+  mode: undefined,
   workspaceRoot: "",
   xlsxPath: "",
   reviewPath: "",
@@ -39,6 +43,8 @@ export const state: ExtensionState = {
   allowedFiles: new Set<string>(),
   allowedFilesFromReviewJson: new Set<string>(),
   isChecking: false,
+  decorationProvider: undefined,
+  treeProvider: undefined,
 };
 
 // 열려 있는 웹뷰 패널을 관리하는 Map (웹뷰 관리자에서만 직접 사용)
@@ -51,6 +57,7 @@ export let previouslyVisibleJsonFiles: Set<string> = new Set();
 export const READONLY_SCHEME = "readonly-file";
 export const XLSX_FILENAME = "workfile.xlsx";
 export const REVIEW_JSON_FILENAME = ".review.json";
+export const RESULT_FOLDER = "result";
 export const WORK_FOLDER = "workspace";
 export const WORK_EXT = "json";
 

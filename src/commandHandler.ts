@@ -1,7 +1,9 @@
 // 명령어 등록
 import * as vscode from "vscode";
 import { openFileWithCorrectMode } from "./fileOpenHandler";
-import { WORK_EXT } from "./state";
+import { parseXlsxFile } from "./parsers/xlsxParser";
+import { WORK_EXT, state } from "./state";
+import { setupModeAndWorker } from "./utils/setup";
 import { showStatusPanel } from "./webview/showStatusPanel";
 
 export function registerCommands(context: vscode.ExtensionContext) {
@@ -42,5 +44,16 @@ export function registerCommands(context: vscode.ExtensionContext) {
     openFileWithCorrectMode(context, filePath);
   });
 
-  context.subscriptions.push(openReviewPanelCommand, openFileCommand);
+  const disposableCommand = vscode.commands.registerCommand("extension.selectWorker", async () => {
+    vscode.window.showInformationMessage("작업 모드와 작업자를 다시 설정합니다.");
+    state.mode = undefined;
+    const setupSuccess = await setupModeAndWorker();
+    if (setupSuccess) {
+      state.allowedFiles = new Set(parseXlsxFile());
+      state.treeProvider?.refresh();
+      state.decorationProvider?.refresh();
+    }
+  });
+
+  context.subscriptions.push(openReviewPanelCommand, openFileCommand, disposableCommand);
 }

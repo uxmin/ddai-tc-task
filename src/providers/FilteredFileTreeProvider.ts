@@ -1,5 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
+import { parseXlsxFile } from "../parsers/xlsxParser";
 import { state, WORK_FOLDER } from "../state";
 
 // TreeItem을 상속하여 파일 경로를 저장할 수 있도록 확장합니다.
@@ -30,8 +31,8 @@ export class FilteredFileTreeProvider implements vscode.TreeDataProvider<FileTre
   }
 
   // 데이터가 변경되었을 때 이 함수를 호출하여 트리를 새로고침합니다.
-  refresh(files: string[]): void {
-    this.includedFiles = files;
+  refresh(): void {
+    this.includedFiles = parseXlsxFile();
     this._onDidChangeTreeData.fire();
   }
 

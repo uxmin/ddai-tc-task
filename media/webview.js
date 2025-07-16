@@ -56,11 +56,34 @@
       case "initialData":
         const data = message.data || {};
         const currentUser = message.gitUserName;
+        const mode = message.mode;
 
         document.getElementById("taskDone").checked = data.task_done || false;
         document.getElementById("reviewDone").checked = data.review_done || false;
         document.getElementById("comment").value = data.comment || "";
         document.getElementById("reporting").value = data.reporting || "";
+
+        // ✨ 초기 읽기 전용 상태 설정 (가장 중요)
+        setReadOnlyMode(message.isReadonly);
+
+        // ✨✨ [핵심 수정] 모드에 따라 '작업 완료' 체크박스 활성화/비활성화 처리 ✨✨
+        const taskDoneCheckbox = document.getElementById("taskDone");
+        const reviewDoneCheckbox = document.getElementById("reviewDone");
+        if (mode === "inspect") {
+          taskDoneCheckbox.disabled = true;
+          taskDoneCheckbox.parentElement.style.color = "#888";
+          taskDoneCheckbox.parentElement.style.cursor = "not-allowed";
+          reviewDoneCheckbox.disabled = false;
+          reviewDoneCheckbox.parentElement.style.color = "inherit";
+          reviewDoneCheckbox.parentElement.style.cursor = "pointer";
+        } else {
+          reviewDoneCheckbox.disabled = true;
+          reviewDoneCheckbox.parentElement.style.color = "#888";
+          reviewDoneCheckbox.parentElement.style.cursor = "not-allowed";
+          taskDoneCheckbox.disabled = false;
+          taskDoneCheckbox.parentElement.style.color = "inherit";
+          taskDoneCheckbox.parentElement.style.cursor = "pointer";
+        }
 
         const taskMetaEl = document.getElementById("taskMeta");
         taskMetaEl.innerHTML = data.task_done
@@ -78,10 +101,12 @@
                        </span>`
           : "";
 
-        // ✨ 초기 읽기 전용 상태 설정 (가장 중요)
-        setReadOnlyMode(message.isReadonly);
         break;
-
+      case "updateState":
+        console.log("🔄 상태 업데이트 수신:", message);
+        setReadOnlyMode(message.isReadonly);
+        controlTaskDoneCheckbox(message.mode);
+        break;
       case "setReadOnly":
         setReadOnlyMode(message.value);
         break;

@@ -7,7 +7,7 @@ import { normalizePath } from "./utils/pathUtils";
 import { showStatusPanel } from "./webview/showStatusPanel";
 
 // filePath를 이용해서 읽기 전용 모드로 열거나, 편집 모드로 열고 Status Panel을 띄워줌
-async function openFileWithCorrectMode(context: vscode.ExtensionContext, filePath: string) {
+export async function openFileWithCorrectMode(context: vscode.ExtensionContext, filePath: string) {
   const posixPath = normalizePath(state.workspaceRoot, filePath);
   const reviewMap = loadReviewJson();
   const reviewEntity = reviewMap[posixPath];
@@ -16,6 +16,7 @@ async function openFileWithCorrectMode(context: vscode.ExtensionContext, filePat
   const isDailyReadonly = reviewEntity?.daily === true;
 
   const isReadonly = isExplicitReadonly || isDailyReadonly;
+
   if (isReadonly) {
     console.log(`[읽기 전용 모드]: ${posixPath}`);
     const targetUri = vscode.Uri.file(filePath).with({ scheme: READONLY_SCHEME });
@@ -61,5 +62,3 @@ export function setupFileEventHandlers(context: vscode.ExtensionContext) {
     })
   );
 }
-
-export { openFileWithCorrectMode };

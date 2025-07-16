@@ -1,8 +1,8 @@
-import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
+import { parseXlsxFile } from "../parsers/xlsxParser";
 import { REVIEW_JSON_FILENAME, ReviewMap, WORK_EXT } from "../state";
-import { toPosixPath } from "../utils";
+import { loadReviewJson, toPosixPath } from "../utils";
 import { normalizePath } from "../utils/pathUtils";
 
 export class ReviewFileDecorationProvider implements vscode.FileDecorationProvider {
@@ -45,16 +45,21 @@ export class ReviewFileDecorationProvider implements vscode.FileDecorationProvid
   }
 
   /**
-   * URI가 디렉토리인지 확인
-   * @param uri 확인할 URI
-   * @returns 디렉토리면 true, 아니면 false
+   * ✨ [수정] 데코레이션을 새로고침하는 공식 메서드
+   * 최신 데이터를 다시 로드하고 UI 변경을 트리거합니다.
    */
-  private isDirectory(uri: vscode.Uri): boolean {
-    try {
-      return fs.lstatSync(uri.fsPath).isDirectory();
-    } catch {
-      return false;
-    }
+  public refresh(): void {
+    // 1. 최신 데이터 다시 로드
+    const newReviewMap = loadReviewJson();
+    // 현재 state.gitUser를 기반으로 허용된 파일 목록을 다시 파싱합니다.
+    const newAllowedFiles = new Set(parseXlsxFile());
+
+    // 2. 내부 상태 업데이트
+    this.reviewData = newReviewMap;
+    this.allowedFiles = newAllowedFiles;
+
+    // 3. VS Code에 전체 UI를 다시 그려달라고 알림
+    this._onDidChangeFileDecorations.fire(undefined);
   }
 
   provideFileDecoration(uri: vscode.Uri, token: vscode.CancellationToken): vscode.FileDecoration | undefined {

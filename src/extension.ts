@@ -4,52 +4,47 @@ import * as vscode from "vscode";
 import { registerCommands } from "./commandHandler";
 import { setupFileEventHandlers } from "./fileOpenHandler";
 import { setupFileWatchers } from "./fileWatchers";
-import { parseXlsxFile, selectWorker } from "./parsers/xlsxParser";
+import { parseXlsxFile } from "./parsers/xlsxParser";
 import { FilteredFileTreeProvider } from "./providers/FilteredFileTreeProvider";
 import { ReadonlyFileSystemProvider } from "./providers/ReadonlyFileSystemProvider";
 import { ReviewFileDecorationProvider } from "./providers/ReviewDecorationProvider";
-import { READONLY_SCHEME, REVIEW_JSON_FILENAME, XLSX_FILENAME, state } from "./state";
-import { getGitUserName, loadReviewJson } from "./utils";
+import { READONLY_SCHEME, RESULT_FOLDER, REVIEW_JSON_FILENAME, WORK_FOLDER, XLSX_FILENAME, state } from "./state";
+import { loadReviewJson } from "./utils";
+import { mergeReviewFiles } from "./utils/reviewJson";
+import { setupModeAndWorker } from "./utils/setup";
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('Congratulations, your extension "tc-task" is now active!');
 
   state.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
   if (!state.workspaceRoot) {
-    vscode.window.showErrorMessage("워크스페이스를 열어주세요.");
+    // 워크스페이스 자체가 없는 경우
     return;
   }
 
   // 초기 설정
+  const resultFolderPath = path.join(state.workspaceRoot, RESULT_FOLDER);
+  const workFolderPath = path.join(state.workspaceRoot, WORK_FOLDER);
   state.xlsxPath = path.join(state.workspaceRoot, XLSX_FILENAME);
-  state.reviewPath = path.join(state.workspaceRoot, REVIEW_JSON_FILENAME);
 
-  if (fs.existsSync(state.reviewPath)) {
-    while (!state.mode) {
-      state.mode = await vscode.window.showQuickPick(["work", "inspect"], {
-        placeHolder: "모드를 선택해주세요.",
-      });
-
-      if (!state.mode) {
-        await vscode.window.showWarningMessage(
-          "모드를 선택해야만 작업이 진행됩니다.",
-          { modal: true } // 모달로 해서 닫히지 않도록 할 수도 있음
-        );
-      }
-    }
+  // 활성화 조건 검사
+  if (!fs.existsSync(resultFolderPath) || !fs.existsSync(workFolderPath) || !fs.existsSync(state.xlsxPath)) {
+    return; // 조건 미충족 시 확장 기능 실행 중단
   }
-  vscode.window.showInformationMessage(`${state.mode}가 선택되었습니다.`);
 
-  if (state.mode === "work") {
-    state.gitUser = getGitUserName();
-  } else {
-    const selectedWorker = await selectWorker();
-    if (!selectedWorker) {
-      vscode.window.showErrorMessage("검수할 작업자를 선택하지 않았습니다.");
-      return;
-    }
-    vscode.window.showInformationMessage(`${selectedWorker} 작업자의 작업을 검수합니다.`);
-    state.gitUser = selectedWorker;
+  state.reviewPath = path.join(state.workspaceRoot, REVIEW_JSON_FILENAME);
+  const resultReviewPath = path.join(state.workspaceRoot, RESULT_FOLDER, REVIEW_JSON_FILENAME);
+
+  console.log("\tstate.reviewPath:", state.reviewPath);
+  console.log("\tresultReviewPath:", resultReviewPath);
+
+  await mergeReviewFiles(state.reviewPath, resultReviewPath);
+
+  const isInitialSetupSuccess = await setupModeAndWorker();
+  if (!isInitialSetupSuccess) {
+    vscode.window.showInformationMessage(
+      "초기 설정이 취소되었습니다. '작업자 재선택' 명령어로 다시 시작할 수 있습니다."
+    );
   }
 
   const initialAllowedFiles = fs.existsSync(state.xlsxPath) ? parseXlsxFile() : [];
@@ -63,6 +58,14 @@ export async function activate(context: vscode.ExtensionContext) {
   const readonlyProvider = new ReadonlyFileSystemProvider();
   const treeProvider = new FilteredFileTreeProvider(initialAllowedFiles);
 
+  state.decorationProvider = decorationProvider;
+  state.treeProvider = treeProvider;
+
+  if (isInitialSetupSuccess) {
+    state.treeProvider?.refresh();
+    state.decorationProvider?.refresh();
+  }
+
   context.subscriptions.push(
     vscode.window.registerFileDecorationProvider(decorationProvider),
     vscode.workspace.registerFileSystemProvider(READONLY_SCHEME, readonlyProvider, {
@@ -74,7 +77,7 @@ export async function activate(context: vscode.ExtensionContext) {
   decorationProvider["__forceRefresh"]?.();
 
   // watcher 등록
-  setupFileWatchers(context, decorationProvider, treeProvider);
+  setupFileWatchers(context);
   setupFileEventHandlers(context);
   registerCommands(context);
 

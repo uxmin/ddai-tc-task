@@ -213,5 +213,6 @@ export function showStatusPanel(context: vscode.ExtensionContext, filepath: stri
     gitUserName: state.gitUser,
     data: currentFileReview, // 기존 데이터가 없으면 undefined가 될 수 있음
     isReadonly: isReadonly,
+    mode: state.mode,
   });
 }
